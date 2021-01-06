@@ -1,12 +1,10 @@
 """This module contains Model implementations that utilize the MPNN model as 
 their underlying model"""
-
 from argparse import Namespace
 from functools import partial
 from typing import Iterable, List, NoReturn, Optional, Sequence, Tuple, TypeVar
 
 import numpy as np
-from numpy import ndarray
 from tqdm import tqdm
 import torch.cuda
 
@@ -18,6 +16,7 @@ from . import chemprop
 
 from molpal.models.base import Model
 from molpal.models import mpnn
+from molpal.models import utils
 
 T = TypeVar('T')
 T_feat = TypeVar('T_feat')
@@ -59,13 +58,19 @@ class MPNN:
                  epochs: int = 50, warmup_epochs: float = 2.0,
                  init_lr: float = 1e-4, max_lr: float = 1e-3,
                  final_lr: float = 1e-4, log_frequency: int = 10,
-                 ncpu: int = 1):
-        if torch.cuda.is_available():
-            self.device = 'cuda' 
-        else:
-            self.device = 'cpu'
+                 num_workers: int = 1, ncpu: int = 1,
+                 distributed: bool = False,):
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-        self.ncpu = ncpu
+        self.distributed = distributed
+        self.num_workers = num_workers
+        
+        if self.distributed:
+            pass
+            # from mpi4py import MPI
+            # num_workers = MPI.COMM_WORLD.Get_size()
+        else:
+            self.ncpu = ncpu * num_workers
 
         self.model = mpnn.MoleculeModel(
             uncertainty_method=uncertainty_method,
@@ -73,9 +78,9 @@ class MPNN:
             atom_messages=atom_messages, hidden_size=hidden_size,
             bias=bias, depth=depth, dropout=dropout, undirected=undirected,
             activation=activation, ffn_hidden_size=ffn_hidden_size, 
-            ffn_num_layers=ffn_num_layers, device=self.device,
+            ffn_num_layers=ffn_num_layers, device=device,
         )
-        self.model = self.model.to(self.device)
+        self.device = self.model.device
 
         self.epochs = epochs
         self.batch_size = batch_size
@@ -137,11 +142,10 @@ class MPNN:
 
         return True
 
-    def make_datasets(
-            self, xs: Iterable[str], ys: Sequence[float]
-            ) -> Tuple[MoleculeDataset, MoleculeDataset]:
+    def make_datasets(self, xs: Iterable[str],
+                      ys: Sequence[float]) -> Tuple[MoleculeDataset, 
+                                                    MoleculeDataset]:
         """Split xs and ys into train and validation datasets"""
-
         data = MoleculeDataset([
             MoleculeDatapoint(smiles=[x], targets=[y])
             for x, y in zip(xs, ys)
@@ -156,8 +160,42 @@ class MPNN:
 
         return train_data, val_data
 
-    def predict(self, xs: Iterable[str]) -> ndarray:
+    def predict(self, xs: Iterable[str]) -> np.ndarray:
         """Generate predictions for the inputs xs"""
+        if self.distributed:
+            from mpi4py import MPI
+            from mpi4py.futures import MPIPoolExecutor
+            num_workers = MPI.COMM_WORLD.Get_size()
+
+            xs_batches = utils.batches(xs, 1000)
+            test_data_batches = [
+                MoleculeDataset([MoleculeDatapoint(smiles=[x])
+                                for x in xs_batch])
+                for xs_batch in xs_batches
+            ]
+            data_loaders = [MoleculeDataLoader(
+                dataset=test_data_batch,
+                batch_size=self.batch_size,
+                num_workers=self.ncpu
+            ) for test_data_batch in test_data_batches]
+
+            predict_ = partial(mpnn.predict, model=self.model,
+                               device=self.device, scaler=self.scaler)
+            with MPIPoolExecutor(max_workers=num_workers) as pool:
+                predictions = list(pool.map(predict_, data_loaders))
+            
+            if isinstance(predictions[0], tuple):
+                means_batches, vars_batches = list(zip(*predictions))
+                means = np.concatenate(means_batches)
+                variances = np.concatenate(vars_batches)
+                
+                return means, variances
+            
+            return np.concatenate(means_batches)
+
+            # return mpnn.predict(self.model, data_loader,
+            #                     device=self.device, scaler=self.scaler)
+
         test_data = MoleculeDataset([MoleculeDatapoint(smiles=[x]) for x in xs])
         data_loader = MoleculeDataLoader(
             dataset=test_data,
@@ -165,7 +203,8 @@ class MPNN:
             num_workers=self.ncpu
         )
 
-        return mpnn.predict(self.model, data_loader, scaler=self.scaler)
+        return mpnn.predict(data_loader, model=self.model,
+                            device=self.device, scaler=self.scaler)
 
 class MPNModel(Model):
     """Message-passing model that learns feature representations of inputs and
@@ -194,9 +233,8 @@ class MPNModel(Model):
 
         return self.model.train(xs, ys)
 
-    def get_means(self, xs: Sequence[str]) -> ndarray:
-        preds = self.model.predict(xs)
-        return preds
+    def get_means(self, xs: Sequence[str]) -> np.ndarray:
+        return self.model.predict(xs)
 
     def get_means_and_vars(self, xs: List) -> NoReturn:
         raise TypeError('MPNModel cannot predict variance!')
@@ -233,15 +271,16 @@ class MPNDropoutModel(Model):
 
         return self.model.train(xs, ys)
 
-    def get_means(self, xs: Sequence[str]) -> ndarray:
+    def get_means(self, xs: Sequence[str]) -> np.ndarray:
         predss = self._get_predictions(xs)
         return np.mean(predss, axis=1)
 
-    def get_means_and_vars(self, xs: Sequence[str]) -> Tuple[ndarray, ndarray]:
+    def get_means_and_vars(self, xs: Sequence[str]) -> Tuple[np.ndarray,
+                                                             np.ndarray]:
         predss = self._get_predictions(xs)
         return np.mean(predss, axis=1), np.var(predss, axis=1)
 
-    def _get_predictions(self, xs: Sequence[str]) -> ndarray:
+    def _get_predictions(self, xs: Sequence[str]) -> np.ndarray:
         predss = np.zeros((len(xs), self.dropout_size))
         for j in tqdm(range(self.dropout_size),
                       desc='dropout prediction'):
@@ -276,18 +315,19 @@ class MPNTwoOutputModel(Model):
 
         return self.model.train(xs, ys)
 
-    def get_means(self, xs: Sequence[str]) -> ndarray:
+    def get_means(self, xs: Sequence[str]) -> np.ndarray:
         means, _ = self._get_predictions(xs)
-        return means.flatten()
+        return means
 
-    def get_means_and_vars(self, xs: Sequence[str]) -> Tuple[ndarray, ndarray]:
+    def get_means_and_vars(self, xs: Sequence[str]) -> Tuple[np.ndarray,
+                                                             np.ndarray]:
         means, variances = self._get_predictions(xs)
-        return means.flatten(), variances.flatten()
-
-    def _get_predictions(self, xs: Sequence[str]) -> Tuple[ndarray, ndarray]:
-        """Get both the means and the variances for the xs"""
-        means, variances = self.model.predict(xs)
         return means, variances
+
+    def _get_predictions(self, xs: Sequence[str]) -> Tuple[np.ndarray,
+                                                           np.ndarray]:
+        """Get both the means and the variances for the xs"""
+        return self.model.predict(xs)
 
 # def combine_sds(sd1: float, mu1: float, n1: int,
 #                 sd2: float, mu2: float, n2: int):

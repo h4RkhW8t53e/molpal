@@ -1,24 +1,26 @@
-from typing import List, Iterable, Optional
+from typing import List, Iterable, Optional, Tuple, Union
 
 import numpy as np
 import torch
-from torch import nn
 from tqdm import tqdm
 
 from ..chemprop.data import MoleculeDataLoader, MoleculeDataset, StandardScaler
 from ..chemprop.features import BatchMolGraph, mol2graph
 
-def predict(model: nn.Module, data_loader: Iterable,
+from molpal.models.mpnn.model import MoleculeModel
+
+def predict(data_loader: Iterable, model: MoleculeModel,
+            device: Optional[Union[torch.device, str, Tuple]] = None,
             disable_progress_bar: bool = False,
             scaler: Optional[StandardScaler] = None) -> np.ndarray:
     """Predict the output values of a dataset
 
     Parameters
     ----------
-    model : nn.Module
-        the model to use
     data_loader : MoleculeDataLoader
         an iterable of MoleculeDatasets
+    model : MoleculeModel
+        the MoleculeModel to use
     disable_progress_bar : bool (Default = False)
         whether to disable the progress bar
     scaler : Optional[StandardScaler] (Default = None)
@@ -27,9 +29,12 @@ def predict(model: nn.Module, data_loader: Iterable,
     Returns
     -------
     predictions : np.ndarray
-        an NxM array where N is the number of inputs for wchi to produce 
+        an NxM array where N is the number of inputs for which to produce 
         predictions and M is the number of prediction tasks
     """
+    if device:
+        model.device = device
+
     model.eval()
 
     pred_batches = []
@@ -49,10 +54,10 @@ def predict(model: nn.Module, data_loader: Iterable,
             means = scaler.inverse_transform(means)
             variances = scaler.stds**2 * variances
 
-        return means, variances
+        return means.flatten(), variances.flatten()
 
     # Inverse scale if regression
     if scaler:
         preds = scaler.inverse_transform(preds)
 
-    return preds
+    return preds.flatten()

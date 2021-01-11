@@ -98,19 +98,19 @@ class MoleculeModel(nn.Module):
 
         self.output_size = num_tasks
         
+        device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
+
         self.encoder = self.build_encoder(
             atom_messages=atom_messages, hidden_size=hidden_size,
             bias=bias, depth=depth, dropout=dropout, undirected=undirected,
             aggregation=aggregation, aggregation_norm=aggregation_norm,
-            activation=activation
+            activation=activation, device=device
         )
         self.ffn = self.build_ffn(
             output_size=num_tasks, hidden_size=hidden_size, dropout=dropout, 
             activation=activation, ffn_num_layers=ffn_num_layers, 
             ffn_hidden_size=ffn_hidden_size
         )
-
-        device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
         self.device = device
 
         initialize_weights(self)
@@ -130,14 +130,16 @@ class MoleculeModel(nn.Module):
                       hidden_size: int = 300, depth: int = 3,
                       dropout: float = 0.0, undirected: bool = False,
                       aggregation: str = 'mean', aggregation_norm: int = 100,
-                      activation: str = 'ReLU') -> None:
+                      activation: str = 'ReLU',
+                      device: Optional[Union[torch.device, str, Tuple]] = None
+                      ) -> None:
          return MPN(Namespace(
             atom_messages=atom_messages, hidden_size=hidden_size,
             bias=bias, depth=depth, dropout=dropout, undirected=undirected,
             features_only=False, use_input_features=False,
             aggregation=aggregation, aggregation_norm=aggregation_norm,
             activation=activation, number_of_molecules=1,
-            atom_descriptors=None, mpn_shared=False
+            atom_descriptors=None, mpn_shared=False, device=device
         ))
 
     def build_ffn(self, output_size: int, 

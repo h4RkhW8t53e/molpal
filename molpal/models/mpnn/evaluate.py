@@ -6,10 +6,10 @@ from torch import nn
 from molpal.models.mpnn.predict import predict
 from ..chemprop.data import MoleculeDataLoader, StandardScaler
 
-def evaluate_predictions(
-    preds: List[List[float]], targets: List[List[float]],
-    num_tasks: int, metric_func: Callable, dataset_type: str,
-    logger: logging.Logger = None) -> List[float]:
+def evaluate_predictions(preds: List[List[float]], targets: List[List[float]],
+                         num_tasks: int, metric_func: Callable,
+                         dataset_type: str,
+                         logger: logging.Logger = None) -> List[float]:
     """Evaluates predictions using a metric function and filtering out invalid targets.
 
     Paramaters
@@ -99,7 +99,7 @@ def evaluate(model: nn.Module, data_loader: MoleculeDataLoader, num_tasks: int,
     List[float]
         A list with the score for each task based on metric_func
     """
-    preds = predict(model, data_loader, scaler=scaler)
+    preds = predict(data_loader, model, scaler=scaler)
                     
     results = evaluate_predictions(
         preds=preds, targets=data_loader.targets, num_tasks=num_tasks,

@@ -131,7 +131,8 @@ class MPNN:
             #   scheduler.step()
             val_scores = mpnn.evaluate(
                 self.model, val_data_loader, self.model.output_size,
-                self.metric_func, 'regession', self.scaler)
+                self.metric_func, 'regession', self.scaler
+            )
             val_score = np.nanmean(val_scores)
 
             if val_score > best_val_score:
@@ -193,9 +194,6 @@ class MPNN:
             
             return np.concatenate(means_batches)
 
-            # return mpnn.predict(self.model, data_loader,
-            #                     device=self.device, scaler=self.scaler)
-
         test_data = MoleculeDataset([MoleculeDatapoint(smiles=[x]) for x in xs])
         data_loader = MoleculeDataLoader(
             dataset=test_data,
@@ -234,7 +232,7 @@ class MPNModel(Model):
         return self.model.train(xs, ys)
 
     def get_means(self, xs: Sequence[str]) -> np.ndarray:
-        return self.model.predict(xs)
+        return self.model.predict(xs).flatten()
 
     def get_means_and_vars(self, xs: List) -> NoReturn:
         raise TypeError('MPNModel cannot predict variance!')
@@ -284,7 +282,7 @@ class MPNDropoutModel(Model):
         predss = np.zeros((len(xs), self.dropout_size))
         for j in tqdm(range(self.dropout_size),
                       desc='dropout prediction'):
-            predss[:, j] = self.model.predict(xs)
+            predss[:, j] = self.model.predict(xs).flatten()
         return predss
 
 class MPNTwoOutputModel(Model):
@@ -321,13 +319,13 @@ class MPNTwoOutputModel(Model):
 
     def get_means_and_vars(self, xs: Sequence[str]) -> Tuple[np.ndarray,
                                                              np.ndarray]:
-        means, variances = self._get_predictions(xs)
-        return means, variances
+        return self._get_predictions(xs)
 
     def _get_predictions(self, xs: Sequence[str]) -> Tuple[np.ndarray,
                                                            np.ndarray]:
         """Get both the means and the variances for the xs"""
-        return self.model.predict(xs)
+        means, variances = self.model.predict(xs)
+        return means.flatten(), variances.flatten()
 
 # def combine_sds(sd1: float, mu1: float, n1: int,
 #                 sd2: float, mu2: float, n2: int):

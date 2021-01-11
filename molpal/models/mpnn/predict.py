@@ -54,10 +54,10 @@ def predict(data_loader: Iterable, model: MoleculeModel,
             means = scaler.inverse_transform(means)
             variances = scaler.stds**2 * variances
 
-        return means.flatten(), variances.flatten()
+        return means, variances
 
     # Inverse scale if regression
     if scaler:
         preds = scaler.inverse_transform(preds)
 
-    return preds.flatten()
+    return preds

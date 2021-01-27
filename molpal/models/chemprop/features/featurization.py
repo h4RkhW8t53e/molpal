@@ -71,7 +71,9 @@ def onek_encoding_unk(value: int, choices: List[int]) -> List[int]:
     return encoding
 
 
-def atom_features(atom: Chem.rdchem.Atom, functional_groups: List[int] = None) -> List[Union[bool, int, float]]:
+def atom_features(atom: Chem.rdchem.Atom,
+                  functional_groups: List[int] = None
+                  ) -> List[Union[bool, int, float]]:
     """
     Builds a feature vector for an atom.
 
@@ -79,16 +81,22 @@ def atom_features(atom: Chem.rdchem.Atom, functional_groups: List[int] = None) -
     :param functional_groups: A k-hot vector indicating the functional groups the atom belongs to.
     :return: A list containing the atom features.
     """
-    features = onek_encoding_unk(atom.GetAtomicNum() - 1, ATOM_FEATURES['atomic_num']) + \
-           onek_encoding_unk(atom.GetTotalDegree(), ATOM_FEATURES['degree']) + \
-           onek_encoding_unk(atom.GetFormalCharge(), ATOM_FEATURES['formal_charge']) + \
-           onek_encoding_unk(int(atom.GetChiralTag()), ATOM_FEATURES['chiral_tag']) + \
-           onek_encoding_unk(int(atom.GetTotalNumHs()), ATOM_FEATURES['num_Hs']) + \
-           onek_encoding_unk(int(atom.GetHybridization()), ATOM_FEATURES['hybridization']) + \
-           [1 if atom.GetIsAromatic() else 0] + \
-           [atom.GetMass() * 0.01]  # scaled to about the same range as other features
-    if functional_groups is not None:
-        features += functional_groups
+    features = (
+        onek_encoding_unk(atom.GetAtomicNum() - 1, ATOM_FEATURES['atomic_num']) 
+        + onek_encoding_unk(atom.GetTotalDegree(), ATOM_FEATURES['degree']) 
+        + onek_encoding_unk(atom.GetFormalCharge(),
+                            ATOM_FEATURES['formal_charge'])
+        + onek_encoding_unk(int(atom.GetChiralTag()),
+                            ATOM_FEATURES['chiral_tag'])
+        + onek_encoding_unk(int(atom.GetTotalNumHs()),
+                            ATOM_FEATURES['num_Hs'])
+        + onek_encoding_unk(int(atom.GetHybridization()),
+                            ATOM_FEATURES['hybridization'])
+        + [1 if atom.GetIsAromatic() else 0]
+        + [atom.GetMass() * 0.01]
+    )  # scaled to about the same range as other features
+    # if functional_groups is not None:
+    #     features += functional_groups
     return features
 
 
@@ -126,12 +134,16 @@ class MolGraph:
     * :code:`n_bonds`: The number of bonds in the molecule.
     * :code:`f_atoms`: A mapping from an atom index to a list of atom features.
     * :code:`f_bonds`: A mapping from a bond index to a list of bond features.
-    * :code:`a2b`: A mapping from an atom index to a list of incoming bond indices.
-    * :code:`b2a`: A mapping from a bond index to the index of the atom the bond originates from.
-    * :code:`b2revb`: A mapping from a bond index to the index of the reverse bond.
+    * :code:`a2b`: A mapping from an atom index to a list of incoming bond 
+    indices.
+    * :code:`b2a`: A mapping from a bond index to the index of the atom the 
+    bond originates from.
+    * :code:`b2revb`: A mapping from a bond index to the index of the reverse 
+    bond.
     """
 
-    def __init__(self, mol: Union[str, Chem.Mol], atom_descriptors: np.ndarray = None):
+    def __init__(self, mol: Union[str, Chem.Mol],
+                 atom_descriptors: np.ndarray = None):
         """
         :param mol: A SMILES or an RDKit molecule.
         """
@@ -141,22 +153,29 @@ class MolGraph:
 
         self.n_atoms = 0  # number of atoms
         self.n_bonds = 0  # number of bonds
-        self.f_atoms = []  # mapping from atom index to atom features
-        self.f_bonds = []  # mapping from bond index to concat(in_atom, bond) features
+        self.f_atoms = []  # map from atom index->atom feats
+        self.f_bonds = []  # map from bond index->concat(in_atom, bond) feats
         self.a2b = []  # mapping from atom index to incoming bond indices
-        self.b2a = []  # mapping from bond index to the index of the atom the bond is coming from
-        self.b2revb = []  # mapping from bond index to the index of the reverse bond
+        # mapping from bond index to the index of the atom
+        # the bond is coming from
+        self.b2a = []
+        # mapping from bond index to the index of the reverse bond
+        self.b2revb = []
 
         # Get atom features
         self.f_atoms = [atom_features(atom) for atom in mol.GetAtoms()]
-        if atom_descriptors is not None:
-            self.f_atoms = [f_atoms + descs.tolist() for f_atoms, descs in zip(self.f_atoms, atom_descriptors)]
+        # if atom_descriptors is not None:
+        #     self.f_atoms = [
+        #         f_atoms + descs.tolist()
+        #         for f_atoms, descs in zip(self.f_atoms, atom_descriptors)
+        #     ]
 
         self.n_atoms = len(self.f_atoms)
 
         # Initialize atom to bond mapping for each atom
-        for _ in range(self.n_atoms):
-            self.a2b.append([])
+        self.a2b = [[]] * self.n_atoms
+        # for _ in range(self.n_atoms):
+        #     self.a2b.append([])
 
         # Get bond features
         for a1 in range(self.n_atoms):
@@ -220,8 +239,12 @@ class BatchMolGraph:
             f_atoms.extend(mol_graph.f_atoms)
             f_bonds.extend(mol_graph.f_bonds)
 
-            for a in range(mol_graph.n_atoms):
-                a2b.append([b + self.n_bonds for b in mol_graph.a2b[a]])
+            a2b.extend([
+                [b + self.n_bonds for b in mol_graph.a2b[a]]
+                for a in range(mol_graph.n_atoms)
+            ])
+            # for a in range(mol_graph.n_atoms):
+            #     a2b.append([b + self.n_bonds for b in mol_graph.a2b[a]])
 
             for b in range(mol_graph.n_bonds):
                 b2a.append(self.n_atoms + mol_graph.b2a[b])
@@ -232,19 +255,25 @@ class BatchMolGraph:
             self.n_atoms += mol_graph.n_atoms
             self.n_bonds += mol_graph.n_bonds
 
-        self.max_num_bonds = max(1, max(len(in_bonds) for in_bonds in a2b))  # max with 1 to fix a crash in rare case of all single-heavy-atom mols
+        # max with 1 to fix a crash in rare case of all single-heavy-atom mols
+        self.max_num_bonds = max(1, max(len(in_bonds) for in_bonds in a2b))
 
         self.f_atoms = torch.FloatTensor(f_atoms)
         self.f_bonds = torch.FloatTensor(f_bonds)
-        self.a2b = torch.LongTensor([a2b[a] + [0] * (self.max_num_bonds - len(a2b[a])) for a in range(self.n_atoms)])
+        self.a2b = torch.LongTensor([
+            a2b[a] + [0] * (self.max_num_bonds - len(a2b[a]))
+            for a in range(self.n_atoms)
+        ])
         self.b2a = torch.LongTensor(b2a)
         self.b2revb = torch.LongTensor(b2revb)
         self.b2b = None  # try to avoid computing b2b b/c O(n_atoms^3)
         self.a2a = None  # only needed if using atom messages
 
-    def get_components(self, atom_messages: bool = False) -> Tuple[torch.FloatTensor, torch.FloatTensor,
-                                                                   torch.LongTensor, torch.LongTensor, torch.LongTensor,
-                                                                   List[Tuple[int, int]], List[Tuple[int, int]]]:
+    def get_components(self,
+        atom_messages: bool = False
+    ) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.LongTensor,
+               torch.LongTensor, torch.LongTensor, List[Tuple[int, int]],
+               List[Tuple[int, int]]]:
         """
         Returns the components of the :class:`BatchMolGraph`.
 
@@ -258,10 +287,12 @@ class BatchMolGraph:
         * :code:`a_scope`
         * :code:`b_scope`
 
-        :param atom_messages: Whether to use atom messages instead of bond messages. This changes the bond feature
-                              vector to contain only bond features rather than both atom and bond features.
-        :return: A tuple containing PyTorch tensors with the atom features, bond features, graph structure,
-                 and scope of the atoms and bonds (i.e., the indices of the molecules they belong to).
+        :param atom_messages: Whether to use atom messages instead of bond 
+        messages. This changes the bond feature vector to contain only bond 
+        features rather than both atom and bond features.
+        :return: A tuple containing PyTorch tensors with the atom features, 
+        bond features, graph structure, and scope of the atoms and bonds (i.e., 
+        the indices of the molecules they belong to).
         """
         if atom_messages:
             f_bonds = self.f_bonds[:, :get_bond_fdim(atom_messages=atom_messages)]
